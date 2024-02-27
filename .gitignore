@@ -19,3 +19,7 @@
 
 # Go workspace file
 go.work
+measurements-100mil.txt
+measurements-10mil.txt
+measurements-1mil.txt
+measurements.txt
