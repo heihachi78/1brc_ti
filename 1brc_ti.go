@@ -55,11 +55,16 @@ func getChunkSizes(numberOfFileChunks int, fileName string) ([]fileChunkLimits, 
 				check(fileReadError)
 			}
 			var i int = 0
-			for readBuffer[i] != '\n' && readBuffer[i] != '\r' && i < n {
-				i++
-				if i+1 < n && (readBuffer[i+1] == '\n' || readBuffer[i+1] == '\r') {
+			for i < n {
+				if readBuffer[i] == 13 && readBuffer[i+1] == 10 {
 					i++
+					break
 				}
+				if readBuffer[i] == 10 && readBuffer[i+1] == 13 {
+					i++
+					break
+				}
+				i++
 			}
 			chunkLimitsData[id].displacement = int64(i + 1)
 		}(idx, chunkLimitsData, file)
@@ -80,11 +85,12 @@ func getChunkSizes(numberOfFileChunks int, fileName string) ([]fileChunkLimits, 
 	return chunkLimitsData, stat.Size()
 }
 
-func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int) int64 {
+func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int) (int64, int64) {
 	var startTime = time.Now()
 
 	numberOfFileChunks := len(chunkLimitsData)
 	totalBytesReadByAllGoRoutines := int64(0)
+	totalLinesReadByAllGoRoutines := int64(0)
 
 	waitGroup := sync.WaitGroup{}
 	for idx := 0; idx < numberOfFileChunks; idx++ {
@@ -98,9 +104,11 @@ func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBu
 			defer file.Close()
 
 			var readBuffer []byte = make([]byte, readBufferLength)
+			var unprocessedBuffer []byte
 			totalBytesReadByThisGoRoutine := int64(0)
+			totalLinesReadByThisGoRoutine := int64(0)
 			for totalBytesReadByThisGoRoutine < chunkLimitsData[id].bytesToRead {
-				n, fileReadErr := file.ReadAt(readBuffer, chunkLimitsData[id].readFrom)
+				n, fileReadErr := file.ReadAt(readBuffer, chunkLimitsData[id].readFrom+totalBytesReadByThisGoRoutine)
 				if fileReadErr != nil && fileReadErr != io.EOF {
 					check(fileReadErr)
 				}
@@ -108,9 +116,25 @@ func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBu
 					n = int(chunkLimitsData[id].bytesToRead - totalBytesReadByThisGoRoutine)
 				}
 				totalBytesReadByThisGoRoutine += int64(n)
+				bytesToProcess := append(unprocessedBuffer, readBuffer[:n]...)
+				notProcessedFrom := 0
+				for l := 0; l < len(bytesToProcess)-1; l++ {
+					if bytesToProcess[l] == 13 && bytesToProcess[l+1] == 10 {
+						totalLinesReadByThisGoRoutine++
+						notProcessedFrom = l + 2
+					}
+					if bytesToProcess[l] == 10 && bytesToProcess[l+1] == 13 {
+						totalLinesReadByThisGoRoutine++
+						notProcessedFrom = l + 2
+					}
+				}
+				unprocessedBuffer = nil
+				unprocessedBuffer = bytesToProcess[notProcessedFrom:]
 			}
 			totalBytesReadByAllGoRoutines += totalBytesReadByThisGoRoutine
+			totalLinesReadByAllGoRoutines += totalLinesReadByThisGoRoutine
 			fmt.Printf("%d read %d bytes from %d bytes starting at %d\n", id, totalBytesReadByThisGoRoutine, chunkLimitsData[id].bytesToRead, chunkLimitsData[id].readFrom)
+			fmt.Printf("%d read %d lines\n", id, totalLinesReadByThisGoRoutine)
 			var readRunTime = time.Since(readStartTime)
 			fmt.Printf("Time taken to read file %d chunk: %v\n", id, readRunTime)
 		}(idx, fileName, readBufferLength)
@@ -119,7 +143,7 @@ func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBu
 
 	var runTime = time.Since(startTime)
 	fmt.Printf("Time taken to read file in chunks: %v\n", runTime)
-	return totalBytesReadByAllGoRoutines
+	return totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines
 }
 
 func main() {
@@ -128,6 +152,6 @@ func main() {
 	var readBufferLength = flag.Int("readbuffer", 524288, "length of the read buffer, the amount we read at a time")
 	flag.Parse()
 	chunkLimitsData, fileSize := getChunkSizes(*numberOfChunks, *inputFile)
-	totalBytesReadByAllGoRoutines := readFileInChunks(*inputFile, chunkLimitsData, *readBufferLength)
-	fmt.Println(fileSize, totalBytesReadByAllGoRoutines, chunkLimitsData)
+	totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines := readFileInChunks(*inputFile, chunkLimitsData, *readBufferLength)
+	fmt.Println(fileSize, totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, chunkLimitsData)
 }
