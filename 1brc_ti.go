@@ -93,19 +93,22 @@ func getChunkSizes(numberOfFileChunks int, fileName string) ([]fileChunkLimits, 
 	return chunkLimitsData, stat.Size()
 }
 
-func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int) (int64, int64) {
+func processFile(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int) (int64, int64, []map[string]temperatureData) {
 	var startTime = time.Now()
 
 	numberOfFileChunks := len(chunkLimitsData)
 	totalBytesReadByAllGoRoutines := int64(0)
 	totalLinesReadByAllGoRoutines := int64(0)
+	var cityDatas []map[string]temperatureData = make([]map[string]temperatureData, numberOfFileChunks)
+	for i := 0; i < numberOfFileChunks; i++ {
+		cityDatas[i] = make(map[string]temperatureData)
+	}
 
-	waitGroup := sync.WaitGroup{}
+	fileReadWaitGroup := sync.WaitGroup{}
 	for idx := 0; idx < numberOfFileChunks; idx++ {
-		waitGroup.Add(1)
+		fileReadWaitGroup.Add(1)
 		go func(id int, fileName string, readBufferLength int) {
-			var readStartTime = time.Now()
-			defer waitGroup.Done()
+			defer fileReadWaitGroup.Done()
 
 			var cityData map[string]temperatureData = make(map[string]temperatureData)
 
@@ -135,8 +138,6 @@ func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBu
 					}
 					if (bytesToProcess[l] == 13 && bytesToProcess[l+1] == 10) || (bytesToProcess[l] == 10 && bytesToProcess[l+1] == 13) {
 						totalLinesReadByThisGoRoutine++
-						//lineBytes := bytesToProcess[notProcessedFrom:l]
-						/*NEW GO ROUTINE FROM HERE?*/
 						city := string(bytesToProcess[notProcessedFrom:lastSeparatorIndex])
 						temp := string(bytesToProcess[lastSeparatorIndex+1 : l])
 						tempFloat64, conversionError := strconv.ParseFloat(temp, 64)
@@ -149,7 +150,6 @@ func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBu
 								sumTemp:   tempFloat64,
 								dataCount: 1,
 							}
-							cityData[city] = entry
 						} else {
 							entry.dataCount++
 							entry.sumTemp += tempFloat64
@@ -160,38 +160,170 @@ func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBu
 								entry.maxTemp = tempFloat64
 							}
 						}
-						/*NEW GO ROUTINE UNTILL HERE?*/
+						cityData[city] = entry
 						notProcessedFrom = l + 2
 					}
 				}
 				unprocessedBuffer = nil
 				unprocessedBuffer = bytesToProcess[notProcessedFrom:]
 			}
+			file.Close()
+			cityDatas[id] = cityData
 			totalBytesReadByAllGoRoutines += totalBytesReadByThisGoRoutine
 			totalLinesReadByAllGoRoutines += totalLinesReadByThisGoRoutine
-			//fmt.Printf("%d read %d bytes from %d bytes starting at %d\n", id, totalBytesReadByThisGoRoutine, chunkLimitsData[id].bytesToRead, chunkLimitsData[id].readFrom)
-			//fmt.Printf("%d read %d lines\n", id, totalLinesReadByThisGoRoutine)
-			fmt.Printf("%d collected %d city data\n", id, len(cityData))
-			var readRunTime = time.Since(readStartTime)
-			fmt.Printf("Time taken to read chunk %d: %v\n", id, readRunTime)
 		}(idx, fileName, readBufferLength)
 	}
-	waitGroup.Wait()
+	fileReadWaitGroup.Wait()
 
 	var runTime = time.Since(startTime)
 	fmt.Printf("Time taken to read the entire file content: %v\n", runTime)
-	return totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines
+	return totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas
+}
+
+func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int, channelBufferLength int) (int64, int64, []map[string]temperatureData) {
+	var startTime = time.Now()
+
+	numberOfFileChunks := len(chunkLimitsData)
+	totalBytesReadByAllGoRoutines := int64(0)
+	totalLinesReadByAllGoRoutines := int64(0)
+	var lineChannels []chan []byte = make([]chan []byte, numberOfFileChunks)
+	for i := 0; i < numberOfFileChunks; i++ {
+		lineChannels[i] = make(chan []byte, 64)
+	}
+	var cityDatas []map[string]temperatureData = make([]map[string]temperatureData, numberOfFileChunks)
+	for i := 0; i < numberOfFileChunks; i++ {
+		cityDatas[i] = make(map[string]temperatureData)
+	}
+
+	fileReadWaitGroup := sync.WaitGroup{}
+	lineProcessWaitGroup := sync.WaitGroup{}
+	for idx := 0; idx < numberOfFileChunks; idx++ {
+
+		fileReadWaitGroup.Add(1)
+		go func(id int, fileName string, readBufferLength int, lineChannel chan []byte) {
+			defer fileReadWaitGroup.Done()
+
+			file, fileOpenError := os.Open(fileName)
+			check(fileOpenError)
+			defer file.Close()
+
+			var readBuffer []byte = make([]byte, readBufferLength)
+			var unprocessedBuffer []byte
+			totalBytesReadByThisGoRoutine := int64(0)
+			totalLinesReadByThisGoRoutine := int64(0)
+			for totalBytesReadByThisGoRoutine < chunkLimitsData[id].bytesToRead {
+				n, fileReadErr := file.ReadAt(readBuffer, chunkLimitsData[id].readFrom+totalBytesReadByThisGoRoutine)
+				if fileReadErr != nil && fileReadErr != io.EOF {
+					check(fileReadErr)
+				}
+				if n > int(chunkLimitsData[id].bytesToRead-totalBytesReadByThisGoRoutine) {
+					n = int(chunkLimitsData[id].bytesToRead - totalBytesReadByThisGoRoutine)
+				}
+				totalBytesReadByThisGoRoutine += int64(n)
+				bytesToProcess := append(unprocessedBuffer, readBuffer[:n]...)
+				notProcessedFrom := 0
+				for l := 0; l < len(bytesToProcess)-1; l++ {
+					if (bytesToProcess[l] == 13 && bytesToProcess[l+1] == 10) || (bytesToProcess[l] == 10 && bytesToProcess[l+1] == 13) {
+						totalLinesReadByThisGoRoutine++
+						lineChannel <- bytesToProcess[notProcessedFrom:l]
+						notProcessedFrom = l + 2
+					}
+				}
+				unprocessedBuffer = nil
+				unprocessedBuffer = bytesToProcess[notProcessedFrom:]
+			}
+			file.Close()
+			close(lineChannel)
+			totalBytesReadByAllGoRoutines += totalBytesReadByThisGoRoutine
+			totalLinesReadByAllGoRoutines += totalLinesReadByThisGoRoutine
+		}(idx, fileName, readBufferLength, lineChannels[idx])
+
+		lineProcessWaitGroup.Add(1)
+		go func(id int, lineChannel chan []byte) {
+			defer lineProcessWaitGroup.Done()
+
+			var cityData map[string]temperatureData = make(map[string]temperatureData)
+
+			for lineBytes := range lineChannel {
+				separatorIndex := 0
+				for l := 0; l < len(lineBytes)-1; l++ {
+					if lineBytes[l] == 59 {
+						separatorIndex = l
+					}
+				}
+				city := string(lineBytes[:separatorIndex])
+				temp := string(lineBytes[separatorIndex+1:])
+				tempFloat64, conversionError := strconv.ParseFloat(temp, channelBufferLength)
+				check(conversionError)
+				entry, ok := cityData[city]
+				if !ok {
+					entry = temperatureData{
+						minTemp:   tempFloat64,
+						maxTemp:   tempFloat64,
+						sumTemp:   tempFloat64,
+						dataCount: 1,
+					}
+				} else {
+					entry.dataCount++
+					entry.sumTemp += tempFloat64
+					if entry.minTemp > tempFloat64 {
+						entry.minTemp = tempFloat64
+					}
+					if entry.maxTemp < tempFloat64 {
+						entry.maxTemp = tempFloat64
+					}
+				}
+				cityData[city] = entry
+			}
+
+			cityDatas[id] = cityData
+		}(idx, lineChannels[idx])
+	}
+	fileReadWaitGroup.Wait()
+	lineProcessWaitGroup.Wait()
+
+	var runTime = time.Since(startTime)
+	fmt.Printf("Time taken to read the entire file content: %v\n", runTime)
+	return totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas
+}
+
+func mergeCityDatas(cityDatas *[]map[string]temperatureData) map[string]temperatureData {
+	var mergedCityTemperatureData map[string]temperatureData = make(map[string]temperatureData)
+	for idx := 0; idx < len(*cityDatas); idx++ {
+		cityData := (*cityDatas)[idx]
+		for city, entry := range cityData {
+			mergedEntry, ok := mergedCityTemperatureData[city]
+			if !ok {
+				mergedCityTemperatureData[city] = entry
+			} else {
+				mergedEntry.dataCount += entry.dataCount
+				mergedEntry.sumTemp += entry.sumTemp
+				if entry.minTemp < mergedEntry.minTemp {
+					mergedEntry.minTemp = entry.minTemp
+				}
+				if entry.maxTemp > mergedEntry.maxTemp {
+					mergedEntry.maxTemp = entry.maxTemp
+				}
+				mergedCityTemperatureData[city] = mergedEntry
+			}
+		}
+	}
+	return mergedCityTemperatureData
 }
 
 func main() {
 	var inputFile = flag.String("inputfile", "measurements.txt", "name of the file to process with the temperatures data")
 	var numberOfChunks = flag.Int("filechunks", 16, "number of chunk to process the file")
 	var readBufferLength = flag.Int("readbuffer", 2097152, "length of the read buffer, the amount we read at a time")
+	var channelBufferLength = flag.Int("channelbuffer", 64, "length of the channel buffer for messageing between go routines")
 	flag.Parse()
 	var startTime = time.Now()
 	chunkLimitsData, fileSize := getChunkSizes(*numberOfChunks, *inputFile)
-	totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines := readFileInChunks(*inputFile, chunkLimitsData, *readBufferLength)
+	totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas := readFileInChunks(*inputFile, chunkLimitsData, *readBufferLength, *channelBufferLength)
+	//totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas := processFile(*inputFile, chunkLimitsData, *readBufferLength)
+	mergedCityTemperatureData := mergeCityDatas(&cityDatas)
 	var runTime = time.Since(startTime)
-	fmt.Printf("Time taken to solve the 1brc: %v\n", runTime)
-	fmt.Println(fileSize, totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, chunkLimitsData)
+	fmt.Printf("Time taken to solve the %d row challenge: %v\n", totalLinesReadByAllGoRoutines, runTime)
+	fmt.Println(fileSize, totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, *channelBufferLength, *readBufferLength, *numberOfChunks, *inputFile)
+	fmt.Println(len(mergedCityTemperatureData))
 }
