@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -93,7 +94,7 @@ func getChunkSizes(numberOfFileChunks int, fileName string) ([]fileChunkLimits, 
 	return chunkLimitsData, stat.Size()
 }
 
-func processFile(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int) (int64, int64, []map[string]temperatureData) {
+func processFileSimpleGoRoutine(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int) (int64, int64, []map[string]temperatureData) {
 	var startTime = time.Now()
 
 	numberOfFileChunks := len(chunkLimitsData)
@@ -180,7 +181,7 @@ func processFile(fileName string, chunkLimitsData []fileChunkLimits, readBufferL
 	return totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas
 }
 
-func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int, channelBufferLength int) (int64, int64, []map[string]temperatureData) {
+func processFileMultipleGoRoutines(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int, channelBufferLength int) (int64, int64, []map[string]temperatureData) {
 	var startTime = time.Now()
 
 	numberOfFileChunks := len(chunkLimitsData)
@@ -311,6 +312,23 @@ func mergeCityDatas(cityDatas *[]map[string]temperatureData) map[string]temperat
 	return mergedCityTemperatureData
 }
 
+func printDataSorted(cityDatas *map[string]temperatureData) {
+	keys := make([]string, 0, len(*cityDatas))
+	for k := range *cityDatas {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	fmt.Print("{")
+	for i, k := range keys {
+		fmt.Printf("%v=%.1f/%.1f/%.1f", k, (*cityDatas)[k].minTemp, (*cityDatas)[k].sumTemp/float64((*cityDatas)[k].dataCount), (*cityDatas)[k].maxTemp)
+		if i != len(keys)-1 {
+			fmt.Print(", ")
+		}
+	}
+	fmt.Print("}\n")
+}
+
 func main() {
 	var inputFile = flag.String("inputfile", "measurements.txt", "name of the file to process with the temperatures data")
 	var numberOfChunks = flag.Int("filechunks", 16, "number of chunk to process the file")
@@ -319,11 +337,12 @@ func main() {
 	flag.Parse()
 	var startTime = time.Now()
 	chunkLimitsData, fileSize := getChunkSizes(*numberOfChunks, *inputFile)
-	totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas := readFileInChunks(*inputFile, chunkLimitsData, *readBufferLength, *channelBufferLength)
-	//totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas := processFile(*inputFile, chunkLimitsData, *readBufferLength)
+	//totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas := processFileMultipleGoRoutines(*inputFile, chunkLimitsData, *readBufferLength, *channelBufferLength)
+	totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas := processFileSimpleGoRoutine(*inputFile, chunkLimitsData, *readBufferLength)
 	mergedCityTemperatureData := mergeCityDatas(&cityDatas)
+	printDataSorted(&mergedCityTemperatureData)
 	var runTime = time.Since(startTime)
 	fmt.Printf("Time taken to solve the %d row challenge: %v\n", totalLinesReadByAllGoRoutines, runTime)
-	fmt.Println(fileSize, totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, *channelBufferLength, *readBufferLength, *numberOfChunks, *inputFile)
-	fmt.Println(len(mergedCityTemperatureData))
+	fmt.Println(len(mergedCityTemperatureData), fileSize, totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, *channelBufferLength, *readBufferLength, *numberOfChunks, *inputFile)
+
 }
