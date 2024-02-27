@@ -133,8 +133,8 @@ func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBu
 			}
 			totalBytesReadByAllGoRoutines += totalBytesReadByThisGoRoutine
 			totalLinesReadByAllGoRoutines += totalLinesReadByThisGoRoutine
-			fmt.Printf("%d read %d bytes from %d bytes starting at %d\n", id, totalBytesReadByThisGoRoutine, chunkLimitsData[id].bytesToRead, chunkLimitsData[id].readFrom)
-			fmt.Printf("%d read %d lines\n", id, totalLinesReadByThisGoRoutine)
+			//fmt.Printf("%d read %d bytes from %d bytes starting at %d\n", id, totalBytesReadByThisGoRoutine, chunkLimitsData[id].bytesToRead, chunkLimitsData[id].readFrom)
+			//fmt.Printf("%d read %d lines\n", id, totalLinesReadByThisGoRoutine)
 			var readRunTime = time.Since(readStartTime)
 			fmt.Printf("Time taken to read file %d chunk: %v\n", id, readRunTime)
 		}(idx, fileName, readBufferLength)
@@ -148,8 +148,8 @@ func readFileInChunks(fileName string, chunkLimitsData []fileChunkLimits, readBu
 
 func main() {
 	var inputFile = flag.String("inputfile", "measurements.txt", "name of the file to process with the temperatures data")
-	var numberOfChunks = flag.Int("filechunks", 4, "number of chunk to process the file")
-	var readBufferLength = flag.Int("readbuffer", 524288, "length of the read buffer, the amount we read at a time")
+	var numberOfChunks = flag.Int("filechunks", 16, "number of chunk to process the file")
+	var readBufferLength = flag.Int("readbuffer", 2097152, "length of the read buffer, the amount we read at a time")
 	flag.Parse()
 	chunkLimitsData, fileSize := getChunkSizes(*numberOfChunks, *inputFile)
 	totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines := readFileInChunks(*inputFile, chunkLimitsData, *readBufferLength)
