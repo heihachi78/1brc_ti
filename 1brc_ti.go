@@ -118,7 +118,6 @@ func processFileSimpleGoRoutine(fileName string, chunkLimitsData []fileChunkLimi
 			var readBuffer []byte = make([]byte, readBufferLength)
 			var unprocessedBuffer []byte
 			totalBytesReadByThisGoRoutine := int64(0)
-			totalLinesReadByThisGoRoutine := int64(0)
 			for totalBytesReadByThisGoRoutine < chunkLimitsData[id].bytesToRead {
 				n, fileReadErr := file.ReadAt(readBuffer, chunkLimitsData[id].readFrom+totalBytesReadByThisGoRoutine)
 				if fileReadErr != nil && fileReadErr != io.EOF {
@@ -136,7 +135,6 @@ func processFileSimpleGoRoutine(fileName string, chunkLimitsData []fileChunkLimi
 						lastSeparatorIndex = l
 					}
 					if (bytesToProcess[l] == 13 && bytesToProcess[l+1] == 10) || (bytesToProcess[l] == 10 && bytesToProcess[l+1] == 13) {
-						totalLinesReadByThisGoRoutine++
 						city := string(bytesToProcess[notProcessedFrom:lastSeparatorIndex])
 						temp := string(bytesToProcess[lastSeparatorIndex+1 : l])
 						tempFloat64, conversionError := strconv.ParseFloat(temp, 64)
@@ -163,7 +161,6 @@ func processFileSimpleGoRoutine(fileName string, chunkLimitsData []fileChunkLimi
 						notProcessedFrom = l + 2
 					}
 				}
-				unprocessedBuffer = nil
 				unprocessedBuffer = bytesToProcess[notProcessedFrom:]
 			}
 			file.Close()
@@ -205,7 +202,6 @@ func processFileMultipleGoRoutines(fileName string, chunkLimitsData []fileChunkL
 			var readBuffer []byte = make([]byte, readBufferLength)
 			var unprocessedBuffer []byte
 			totalBytesReadByThisGoRoutine := int64(0)
-			totalLinesReadByThisGoRoutine := int64(0)
 			for totalBytesReadByThisGoRoutine < chunkLimitsData[id].bytesToRead {
 				n, fileReadErr := file.ReadAt(readBuffer, chunkLimitsData[id].readFrom+totalBytesReadByThisGoRoutine)
 				if fileReadErr != nil && fileReadErr != io.EOF {
@@ -219,12 +215,10 @@ func processFileMultipleGoRoutines(fileName string, chunkLimitsData []fileChunkL
 				notProcessedFrom := 0
 				for l := 0; l < len(bytesToProcess)-1; l++ {
 					if (bytesToProcess[l] == 13 && bytesToProcess[l+1] == 10) || (bytesToProcess[l] == 10 && bytesToProcess[l+1] == 13) {
-						totalLinesReadByThisGoRoutine++
 						lineChannel <- bytesToProcess[notProcessedFrom:l]
 						notProcessedFrom = l + 2
 					}
 				}
-				unprocessedBuffer = nil
 				unprocessedBuffer = bytesToProcess[notProcessedFrom:]
 			}
 			file.Close()
