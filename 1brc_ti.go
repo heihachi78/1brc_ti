@@ -289,6 +289,8 @@ func processFileMultipleGoRoutines(fileName string, chunkLimitsData []fileChunkL
 }
 
 func mergeCityDatas(cityDatas *[]map[string]temperatureData) map[string]temperatureData {
+	var startTime = time.Now()
+
 	var mergedCityTemperatureData map[string]temperatureData = make(map[string]temperatureData)
 	for idx := 0; idx < len(*cityDatas); idx++ {
 		cityData := (*cityDatas)[idx]
@@ -309,10 +311,13 @@ func mergeCityDatas(cityDatas *[]map[string]temperatureData) map[string]temperat
 			}
 		}
 	}
+	var runTime = time.Since(startTime)
+	fmt.Printf("Time taken to merge data: %v\n", runTime)
 	return mergedCityTemperatureData
 }
 
 func printDataSorted(cityDatas *map[string]temperatureData) {
+	var startTime = time.Now()
 	keys := make([]string, 0, len(*cityDatas))
 	for k := range *cityDatas {
 		keys = append(keys, k)
@@ -327,6 +332,8 @@ func printDataSorted(cityDatas *map[string]temperatureData) {
 		}
 	}
 	fmt.Print("}\n")
+	var runTime = time.Since(startTime)
+	fmt.Printf("Time taken to sort and print data: %v\n", runTime)
 }
 
 func main() {
