@@ -94,12 +94,10 @@ func getChunkSizes(numberOfFileChunks int, fileName string) ([]fileChunkLimits, 
 	return chunkLimitsData, stat.Size()
 }
 
-func processFileSimpleGoRoutine(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int) (int64, int64, []map[string]temperatureData) {
+func processFileSimpleGoRoutine(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int) []map[string]temperatureData {
 	var startTime = time.Now()
 
 	numberOfFileChunks := len(chunkLimitsData)
-	totalBytesReadByAllGoRoutines := int64(0)
-	totalLinesReadByAllGoRoutines := int64(0)
 	var cityDatas []map[string]temperatureData = make([]map[string]temperatureData, numberOfFileChunks)
 	for i := 0; i < numberOfFileChunks; i++ {
 		cityDatas[i] = make(map[string]temperatureData)
@@ -170,23 +168,19 @@ func processFileSimpleGoRoutine(fileName string, chunkLimitsData []fileChunkLimi
 			}
 			file.Close()
 			cityDatas[id] = cityData
-			totalBytesReadByAllGoRoutines += totalBytesReadByThisGoRoutine
-			totalLinesReadByAllGoRoutines += totalLinesReadByThisGoRoutine
 		}(idx, fileName, readBufferLength)
 	}
 	fileReadWaitGroup.Wait()
 
 	var runTime = time.Since(startTime)
 	fmt.Printf("Time taken to read the entire file content: %v\n", runTime)
-	return totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas
+	return cityDatas
 }
 
-func processFileMultipleGoRoutines(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int, channelBufferLength int) (int64, int64, []map[string]temperatureData) {
+func processFileMultipleGoRoutines(fileName string, chunkLimitsData []fileChunkLimits, readBufferLength int, channelBufferLength int) []map[string]temperatureData {
 	var startTime = time.Now()
 
 	numberOfFileChunks := len(chunkLimitsData)
-	totalBytesReadByAllGoRoutines := int64(0)
-	totalLinesReadByAllGoRoutines := int64(0)
 	var lineChannels []chan []byte = make([]chan []byte, numberOfFileChunks)
 	for i := 0; i < numberOfFileChunks; i++ {
 		lineChannels[i] = make(chan []byte, 64)
@@ -235,8 +229,6 @@ func processFileMultipleGoRoutines(fileName string, chunkLimitsData []fileChunkL
 			}
 			file.Close()
 			close(lineChannel)
-			totalBytesReadByAllGoRoutines += totalBytesReadByThisGoRoutine
-			totalLinesReadByAllGoRoutines += totalLinesReadByThisGoRoutine
 		}(idx, fileName, readBufferLength, lineChannels[idx])
 
 		lineProcessWaitGroup.Add(1)
@@ -285,7 +277,7 @@ func processFileMultipleGoRoutines(fileName string, chunkLimitsData []fileChunkL
 
 	var runTime = time.Since(startTime)
 	fmt.Printf("Time taken to read the entire file content: %v\n", runTime)
-	return totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas
+	return cityDatas
 }
 
 func mergeCityDatas(cityDatas *[]map[string]temperatureData) map[string]temperatureData {
@@ -341,15 +333,19 @@ func main() {
 	var numberOfChunks = flag.Int("filechunks", 16, "number of chunk to process the file")
 	var readBufferLength = flag.Int("readbuffer", 2097152, "length of the read buffer, the amount we read at a time")
 	var channelBufferLength = flag.Int("channelbuffer", 64, "length of the channel buffer for messageing between go routines")
+	var simple = flag.Bool("simple", false, "use simple method withot channels and fewer goroutines")
 	flag.Parse()
 	var startTime = time.Now()
 	chunkLimitsData, fileSize := getChunkSizes(*numberOfChunks, *inputFile)
-	//totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas := processFileMultipleGoRoutines(*inputFile, chunkLimitsData, *readBufferLength, *channelBufferLength)
-	totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, cityDatas := processFileSimpleGoRoutine(*inputFile, chunkLimitsData, *readBufferLength)
+	var cityDatas []map[string]temperatureData
+	if !(*simple) {
+		cityDatas = processFileMultipleGoRoutines(*inputFile, chunkLimitsData, *readBufferLength, *channelBufferLength)
+	} else {
+		cityDatas = processFileSimpleGoRoutine(*inputFile, chunkLimitsData, *readBufferLength)
+	}
 	mergedCityTemperatureData := mergeCityDatas(&cityDatas)
 	printDataSorted(&mergedCityTemperatureData)
 	var runTime = time.Since(startTime)
-	fmt.Printf("Time taken to solve the %d row challenge: %v\n", totalLinesReadByAllGoRoutines, runTime)
-	fmt.Println(len(mergedCityTemperatureData), fileSize, totalBytesReadByAllGoRoutines, totalLinesReadByAllGoRoutines, *channelBufferLength, *readBufferLength, *numberOfChunks, *inputFile)
-
+	fmt.Printf("Time taken to solve the challenge: %v\n", runTime)
+	fmt.Println(len(mergedCityTemperatureData), fileSize, *channelBufferLength, *readBufferLength, *numberOfChunks, *inputFile, *simple)
 }
