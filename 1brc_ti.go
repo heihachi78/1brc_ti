@@ -682,5 +682,5 @@ func main() {
 	printDataSorted(&mergedCityTemperatureData, *noprint)
 	fmt.Printf("Time taken to solve the challenge: %v\n", time.Since(startTime))
 	fmt.Println(len(mergedCityTemperatureData), *channelBufferLength, *readBufferLength, *numberOfChunks, *inputFile, *processType)
-	fmt.Printf("==============================================================================================================================================================")
+	fmt.Printf("==============================================================================================================================================================\n")
 }
