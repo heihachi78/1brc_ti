@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -276,38 +277,27 @@ func loadFileIntoMemory(fileName string, chunkLimitsData []fileChunkLimits, read
 			defer syncGroup.Done()
 			var lastSeparatorIndex int
 			var lastNewLineIndex int
-			var city string
 			var totalBytesprocessedThisGoRoutine int64 = 0
 			var collectedRows []rowData = make([]rowData, 2048)
 			var collectedRowsIndex int = 0
 			for totalBytesReadByThisGoRoutine := range readDone {
 				for byteIdx := totalBytesprocessedThisGoRoutine; byteIdx < totalBytesReadByThisGoRoutine; byteIdx++ {
-					if (*bytesToProcess)[byteIdx] == byte(13) {
+					if (*bytesToProcess)[byteIdx] == 13 {
 						lastSeparatorIndex = bytes.LastIndex((*bytesToProcess)[:byteIdx], []byte{';'})
-						collectedRows[collectedRowsIndex].city = (*bytesToProcess)[lastNewLineIndex+1 : lastSeparatorIndex]
 						lastNewLineIndex = bytes.LastIndex((*bytesToProcess)[:byteIdx], []byte{'\n'})
-						collectedRows[collectedRowsIndex].temp = (*bytesToProcess)[lastSeparatorIndex+1 : byteIdx-1]
+						collectedRows[collectedRowsIndex].city = (*bytesToProcess)[lastNewLineIndex+1 : lastSeparatorIndex]
+						collectedRows[collectedRowsIndex].temp = (*bytesToProcess)[lastSeparatorIndex+1 : byteIdx]
 						collectedRowsIndex++
-						if collectedRowsIndex == len(collectedRows) {
+						if collectedRowsIndex == 2048 {
 							syncGroup.Add(1)
+							rowsToSend := collectedRows[0:collectedRowsIndex]
 							go func(collectedRows []rowData, mapChannel chan map[string]temperatureData) {
 								defer syncGroup.Done()
 								var cd map[string]temperatureData = make(map[string]temperatureData)
 								for x := 0; x < len(collectedRows); x++ {
 									entry, ok := cd[string(collectedRows[x].city)]
-
-									tb := collectedRows[x].temp
-									ct := bytes.LastIndex(tb, []byte{'\r'})
-									if ct >= 0 {
-										collectedRows[x].temp = tb[:ct]
-									}
-									tempFloat64, conversionError := strconv.ParseFloat(string(collectedRows[x].temp), 64)
-									if conversionError != nil {
-										tempFloat64, conversionError := strconv.ParseFloat(string(collectedRows[x].temp[:len(collectedRows[x].temp)-1]), 64)
-										check(conversionError)
-										_ = tempFloat64
-									}
-
+									tempFloat64, conversionError := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSuffix(string(collectedRows[x].temp), "\r"), "\n"), 64)
+									check(conversionError)
 									if !ok {
 										entry = temperatureData{
 											minTemp:   tempFloat64,
@@ -325,10 +315,10 @@ func loadFileIntoMemory(fileName string, chunkLimitsData []fileChunkLimits, read
 											entry.maxTemp = tempFloat64
 										}
 									}
-									cd[city] = entry
+									cd[string(collectedRows[x].city)] = entry
 								}
 								mapChannel <- cd
-							}(collectedRows, mapChannel)
+							}(rowsToSend, mapChannel)
 
 							collectedRowsIndex = 0
 						}
@@ -343,7 +333,7 @@ func loadFileIntoMemory(fileName string, chunkLimitsData []fileChunkLimits, read
 				var cd map[string]temperatureData = make(map[string]temperatureData)
 				for x := 0; x < len(collectedRows); x++ {
 					entry, ok := cd[string(collectedRows[x].city)]
-					tempFloat64, conversionError := strconv.ParseFloat(string(collectedRows[x].temp), 64)
+					tempFloat64, conversionError := strconv.ParseFloat(strings.TrimSuffix(string(collectedRows[x].temp), "\r"), 64)
 					check(conversionError)
 					if !ok {
 						entry = temperatureData{
@@ -362,7 +352,7 @@ func loadFileIntoMemory(fileName string, chunkLimitsData []fileChunkLimits, read
 							entry.maxTemp = tempFloat64
 						}
 					}
-					cd[city] = entry
+					cd[string(collectedRows[x].city)] = entry
 				}
 				mapChannel <- cd
 			}(collectedRows[:collectedRowsIndex], mapChannel)
