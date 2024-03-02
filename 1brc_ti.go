@@ -99,14 +99,15 @@ func getChunkSizes(numberOfFileChunks int, fileName string) ([]fileChunkLimits, 
 	return chunkLimitsDataFinal, stat.Size()
 }
 
-func loadFileIntoMemory(fileName string, cpuc int) *[][]byte {
-	startTime := time.Now()
-	cs, _ := getChunkSizes(cpuc, "measurements.txt")
+func loadFileIntoMemory(fileName string, cpuc int) []map[string]temperatureData {
+	cs, _ := getChunkSizes(cpuc, fileName)
 
 	var fileContent [][]byte = make([][]byte, cpuc)
 	for i, data := range cs {
 		fileContent[i] = make([]byte, data.bytesToRead)
 	}
+
+	var tempMap []map[string]temperatureData = make([]map[string]temperatureData, cpuc)
 
 	waitGroup := sync.WaitGroup{}
 	for i := 0; i < cpuc; i++ {
@@ -135,71 +136,58 @@ func loadFileIntoMemory(fileName string, cpuc int) *[][]byte {
 				}
 				totalBytesReadByThisGoRoutine += int64(n)
 			}
+
+			waitGroup.Add(1)
+			go func(id int, content *[]byte, tempMap *[]map[string]temperatureData) {
+				defer waitGroup.Done()
+				tm := make(map[string]temperatureData)
+				nlc := 0
+				sep := 0
+				var city string
+				var temp int32
+				for i := 0; i < len(*content); i++ {
+					switch (*content)[i] {
+					case 195:
+						i++
+					case 59:
+						sep = i
+						i += 3
+					case 13:
+						city = string((*content)[nlc:sep])
+						temp = toInt((*content)[sep+1 : i])
+						if (*content)[i+1] == 10 {
+							i++
+							i++
+						}
+						nlc = i
+						ed, ok := tm[city]
+						if !ok {
+							ed = temperatureData{
+								minTemp:   temp,
+								maxTemp:   temp,
+								sumTemp:   temp,
+								dataCount: 1,
+							}
+						} else {
+							ed.dataCount++
+							ed.sumTemp += temp
+							if temp < ed.minTemp {
+								ed.minTemp = temp
+							}
+							if temp > ed.maxTemp {
+								ed.maxTemp = temp
+							}
+						}
+						tm[city] = ed
+					}
+				}
+				(*tempMap)[id] = tm
+			}(id, &fileContent[id], &tempMap)
+
 		}(i, &fileContent[i])
 	}
 	waitGroup.Wait()
 
-	fmt.Printf("Time taken to read file into memory: %v\n", time.Since(startTime))
-	return &fileContent
-}
-
-func processFromMemory(fileContent *[][]byte) []map[string]temperatureData {
-	startTime := time.Now()
-
-	var tempMap []map[string]temperatureData = make([]map[string]temperatureData, runtime.NumCPU())
-
-	waitGroup := sync.WaitGroup{}
-	for i := 0; i < len(*fileContent); i++ {
-		waitGroup.Add(1)
-		go func(id int, content *[]byte, tempMap *[]map[string]temperatureData) {
-			defer waitGroup.Done()
-			tm := make(map[string]temperatureData)
-			nlc := 0
-			sep := 0
-			var city string
-			var temp int32
-			for i := 0; i < len(*content); i++ {
-				switch (*content)[i] {
-				case 195:
-					i++
-				case 59:
-					sep = i
-					i += 3
-				case 13:
-					city = string((*content)[nlc:sep])
-					temp = toInt((*content)[sep+1 : i])
-					if (*content)[i+1] == 10 {
-						i++
-						i++
-					}
-					nlc = i
-					ed, ok := tm[city]
-					if !ok {
-						ed = temperatureData{
-							minTemp:   temp,
-							maxTemp:   temp,
-							sumTemp:   temp,
-							dataCount: 1,
-						}
-					} else {
-						ed.dataCount++
-						ed.sumTemp += temp
-						if temp < ed.minTemp {
-							ed.minTemp = temp
-						}
-						if temp > ed.maxTemp {
-							ed.maxTemp = temp
-						}
-					}
-					tm[city] = ed
-				}
-			}
-			(*tempMap)[id] = tm
-		}(i, &(*fileContent)[i], &tempMap)
-	}
-	waitGroup.Wait()
-
-	fmt.Printf("Time taken to process from memory: %v\n", time.Since(startTime))
 	return tempMap
 }
 
@@ -273,8 +261,7 @@ func main() {
 	minTime := time.Duration(0)
 	for i := 0; i < 10; i++ {
 		var startTime = time.Now()
-		fc := loadFileIntoMemory("measurements.txt", runtime.NumCPU())
-		td := processFromMemory(fc)
+		td := loadFileIntoMemory(".\\testdata\\measurements.txt", runtime.NumCPU())
 		md := mergeTemperatureData(&td)
 		if i == 9 {
 			printDataSorted(md, false)
