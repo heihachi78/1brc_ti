@@ -521,15 +521,15 @@ func getChunkSizes2(numberOfFileChunks int, fileName string) ([]fileChunkLimits,
 	return chunkLimitsDataFinal, stat.Size()
 }
 
-func readFile(fileName string, byteChan chan<- []byte) {
+func readFile(fileName string, byteChan chan<- []byte, cpus int) {
 	startTime := time.Now()
 
-	chunkLimitsData, _ := getChunkSizes2(runtime.NumCPU()/2, fileName)
+	chunkLimitsData, _ := getChunkSizes2(cpus, fileName)
 	readBufferLength := 1024 * 1024 * 16
 
 	rwg := sync.WaitGroup{}
 
-	for i := 0; i < runtime.NumCPU()/2; i++ {
+	for i := 0; i < cpus; i++ {
 		rwg.Add(1)
 		go func(chunkLimitsData fileChunkLimits) {
 			defer rwg.Done()
@@ -558,7 +558,7 @@ func readFile(fileName string, byteChan chan<- []byte) {
 	}
 	rwg.Wait()
 	defer close(byteChan)
-	fmt.Printf("Time taken to read chunk: %v\n", time.Since(startTime))
+	fmt.Printf("Time taken to read the file: %v\n", time.Since(startTime))
 }
 
 func readByteChannelAndSendToMapChannel(byteChan <-chan []byte, mapChan chan<- map[string]temperatureData) {
@@ -610,25 +610,25 @@ func readByteChannelAndSendToMapChannel(byteChan <-chan []byte, mapChan chan<- m
 	mapChan <- resMap
 }
 
-func readFileInChunks(inputFile string, mapChan chan map[string]temperatureData) {
+func readFileInChunks(inputFile string, mapChan chan map[string]temperatureData, cpus int) {
 	var byteChan chan []byte = make(chan []byte, 1024)
 	wg := sync.WaitGroup{}
 
-	for id := 0; id < runtime.NumCPU(); id++ {
+	for id := 0; id < cpus; id++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			readByteChannelAndSendToMapChannel(byteChan, mapChan)
 		}()
 	}
-	readFile(inputFile, byteChan)
+	readFile(inputFile, byteChan, cpus)
 	wg.Wait()
 	close(mapChan)
 }
 
-func processFile(inputFile string) map[string]temperatureData {
+func processFile(inputFile string, cpus int) map[string]temperatureData {
 	var mapChan chan map[string]temperatureData = make(chan map[string]temperatureData, 128)
-	go readFileInChunks(inputFile, mapChan)
+	go readFileInChunks(inputFile, mapChan, cpus)
 	var resMap map[string]temperatureData = make(map[string]temperatureData)
 	for md := range mapChan {
 		for c, d := range md {
@@ -677,7 +677,7 @@ func main() {
 		cityDatas = processFileMultipleGoRoutines(*inputFile, chunkLimitsData, *readBufferLength, *channelBufferLength)
 		mergedCityTemperatureData = mergeCityDatas(&cityDatas)
 	case 3:
-		mergedCityTemperatureData = processFile(*inputFile)
+		mergedCityTemperatureData = processFile(*inputFile, *numberOfChunks)
 	}
 	printDataSorted(&mergedCityTemperatureData, *noprint)
 	fmt.Printf("Time taken to solve the challenge: %v\n", time.Since(startTime))
