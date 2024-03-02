@@ -661,17 +661,19 @@ func main() {
 	flag.Parse()
 
 	var startTime = time.Now()
-	chunkLimitsData, _ := getChunkSizes2(*numberOfChunks, *inputFile)
 	var cityDatas []map[string]temperatureData
 	var mergedCityTemperatureData map[string]temperatureData
 	switch *processType {
 	case 0:
+		chunkLimitsData, _ := getChunkSizes2(*numberOfChunks, *inputFile)
 		cityDatas = loadFileIntoMemory(*inputFile, chunkLimitsData, *readBufferLength)
 		mergedCityTemperatureData = mergeCityDatas(&cityDatas)
 	case 1:
+		chunkLimitsData, _ := getChunkSizes2(*numberOfChunks, *inputFile)
 		cityDatas = processFileSimpleGoRoutine(*inputFile, chunkLimitsData, *readBufferLength)
 		mergedCityTemperatureData = mergeCityDatas(&cityDatas)
 	case 2:
+		chunkLimitsData, _ := getChunkSizes2(*numberOfChunks, *inputFile)
 		cityDatas = processFileMultipleGoRoutines(*inputFile, chunkLimitsData, *readBufferLength, *channelBufferLength)
 		mergedCityTemperatureData = mergeCityDatas(&cityDatas)
 	case 3:
@@ -680,4 +682,5 @@ func main() {
 	printDataSorted(&mergedCityTemperatureData, *noprint)
 	fmt.Printf("Time taken to solve the challenge: %v\n", time.Since(startTime))
 	fmt.Println(len(mergedCityTemperatureData), *channelBufferLength, *readBufferLength, *numberOfChunks, *inputFile, *processType)
+	fmt.Printf("==============================================================================================================================================================")
 }
