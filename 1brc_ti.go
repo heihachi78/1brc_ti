@@ -101,7 +101,7 @@ func getChunkSizes(numberOfFileChunks int, fileName string) ([]fileChunkLimits, 
 	return chunkLimitsDataFinal, stat.Size()
 }
 
-func loadFileIntoMemory(fileName string, cpuc int, partChannel chan<- map[string]temperatureData) {
+func loadFileIntoMemory(fileName string, cpuc int, partChannel chan<- *map[string]temperatureData) {
 	cs, _ := getChunkSizes(cpuc, fileName)
 
 	var fileContent [][]byte = make([][]byte, cpuc)
@@ -143,14 +143,14 @@ func loadFileIntoMemory(fileName string, cpuc int, partChannel chan<- map[string
 			}
 
 			wg.Add(1)
-			go func(id int, content *[]byte, partChannel chan<- map[string]temperatureData) {
+			go func(id int, content *[]byte, partChannel chan<- *map[string]temperatureData) {
 				defer wg.Done()
 				tm := make(map[string]temperatureData)
 				var city string
 				var temp int32
 				var l int
 				for i := 0; i < len(*content); i++ {
-					l = 64
+					l = 128
 					if l > len((*content)[i:]) {
 						l = len((*content)[i:])
 					}
@@ -181,7 +181,7 @@ func loadFileIntoMemory(fileName string, cpuc int, partChannel chan<- map[string
 					}
 					tm[city] = ed
 				}
-				partChannel <- tm
+				partChannel <- &tm
 			}(id, &fileContent[id], partChannel)
 
 		}(i, &fileContent[i])
@@ -204,12 +204,12 @@ func toInt(b []byte) int32 {
 	return s * r
 }
 
-func mergeTemperatureData(partChannel <-chan map[string]temperatureData) *map[string]temperatureData {
+func mergeTemperatureData(partChannel <-chan *map[string]temperatureData) *map[string]temperatureData {
 	var startTime = time.Now()
 
 	var mergedCityTemperatureData map[string]temperatureData = make(map[string]temperatureData)
 	for cityData := range partChannel {
-		for city, entry := range cityData {
+		for city, entry := range *cityData {
 			mergedEntry, ok := mergedCityTemperatureData[city]
 			if !ok {
 				mergedCityTemperatureData[city] = entry
@@ -260,7 +260,7 @@ func main() {
 	for i := 0; i < *cycle; i++ {
 		var startTime = time.Now()
 		var cpuc = runtime.NumCPU()
-		var partChannel chan map[string]temperatureData = make(chan map[string]temperatureData, cpuc)
+		var partChannel chan *map[string]temperatureData = make(chan *map[string]temperatureData, cpuc)
 		loadFileIntoMemory(".\\testdata\\measurements.txt", cpuc, partChannel)
 		md := mergeTemperatureData(partChannel)
 		if i == *cycle-1 {
