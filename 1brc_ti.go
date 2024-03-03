@@ -101,7 +101,7 @@ func getChunkSizes(numberOfFileChunks int, fileName string) ([]fileChunkLimits, 
 	return chunkLimitsDataFinal, stat.Size()
 }
 
-func loadFileIntoMemory(fileName string, cpuc int) []map[string]temperatureData {
+func loadFileIntoMemory(fileName string, cpuc int, partChannel chan<- map[string]temperatureData) {
 	cs, _ := getChunkSizes(cpuc, fileName)
 
 	var fileContent [][]byte = make([][]byte, cpuc)
@@ -109,14 +109,17 @@ func loadFileIntoMemory(fileName string, cpuc int) []map[string]temperatureData 
 		fileContent[i] = make([]byte, data.bytesToRead)
 	}
 
-	var tempMap []map[string]temperatureData = make([]map[string]temperatureData, cpuc)
+	wg := sync.WaitGroup{}
 
-	waitGroup := sync.WaitGroup{}
+	go func() {
+		wg.Wait()
+		close(partChannel)
+	}()
+
 	for i := 0; i < cpuc; i++ {
-		waitGroup.Add(1)
+		wg.Add(1)
 		go func(id int, content *[]byte) {
-			defer waitGroup.Done()
-
+			defer wg.Done()
 			file, fileOpenError := os.Open(fileName)
 			check(fileOpenError)
 			defer file.Close()
@@ -139,15 +142,15 @@ func loadFileIntoMemory(fileName string, cpuc int) []map[string]temperatureData 
 				totalBytesReadByThisGoRoutine += int64(n)
 			}
 
-			waitGroup.Add(1)
-			go func(id int, content *[]byte, tempMap *[]map[string]temperatureData) {
-				defer waitGroup.Done()
+			wg.Add(1)
+			go func(id int, content *[]byte, partChannel chan<- map[string]temperatureData) {
+				defer wg.Done()
 				tm := make(map[string]temperatureData)
 				var city string
 				var temp int32
-				var l int = 64
+				var l int
 				for i := 0; i < len(*content); i++ {
-					l = 32
+					l = 64
 					if l > len((*content)[i:]) {
 						l = len((*content)[i:])
 					}
@@ -178,14 +181,11 @@ func loadFileIntoMemory(fileName string, cpuc int) []map[string]temperatureData 
 					}
 					tm[city] = ed
 				}
-				(*tempMap)[id] = tm
-			}(id, &fileContent[id], &tempMap)
+				partChannel <- tm
+			}(id, &fileContent[id], partChannel)
 
 		}(i, &fileContent[i])
 	}
-	waitGroup.Wait()
-
-	return tempMap
 }
 
 func toInt(b []byte) int32 {
@@ -204,12 +204,11 @@ func toInt(b []byte) int32 {
 	return s * r
 }
 
-func mergeTemperatureData(cityDatas *[]map[string]temperatureData) *map[string]temperatureData {
+func mergeTemperatureData(partChannel <-chan map[string]temperatureData) *map[string]temperatureData {
 	var startTime = time.Now()
 
 	var mergedCityTemperatureData map[string]temperatureData = make(map[string]temperatureData)
-	for idx := 0; idx < len(*cityDatas); idx++ {
-		cityData := (*cityDatas)[idx]
+	for cityData := range partChannel {
 		for city, entry := range cityData {
 			mergedEntry, ok := mergedCityTemperatureData[city]
 			if !ok {
@@ -260,8 +259,10 @@ func main() {
 	minTime := time.Duration(0)
 	for i := 0; i < *cycle; i++ {
 		var startTime = time.Now()
-		td := loadFileIntoMemory(".\\testdata\\measurements.txt", runtime.NumCPU())
-		md := mergeTemperatureData(&td)
+		var cpuc = runtime.NumCPU()
+		var partChannel chan map[string]temperatureData = make(chan map[string]temperatureData, cpuc)
+		loadFileIntoMemory(".\\testdata\\measurements.txt", cpuc, partChannel)
+		md := mergeTemperatureData(partChannel)
 		if i == *cycle-1 {
 			printDataSorted(md, false)
 		} else {
