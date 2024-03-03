@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"math"
@@ -141,45 +143,40 @@ func loadFileIntoMemory(fileName string, cpuc int) []map[string]temperatureData 
 			go func(id int, content *[]byte, tempMap *[]map[string]temperatureData) {
 				defer waitGroup.Done()
 				tm := make(map[string]temperatureData)
-				nlc := 0
-				sep := 0
 				var city string
 				var temp int32
+				var l int = 64
 				for i := 0; i < len(*content); i++ {
-					switch (*content)[i] {
-					case 195:
-						i++
-					case 59:
-						sep = i
-						i += 3
-					case 13:
-						city = string((*content)[nlc:sep])
-						temp = toInt((*content)[sep+1 : i])
-						if (*content)[i+1] == 10 {
-							i++
-							i++
-						}
-						nlc = i
-						ed, ok := tm[city]
-						if !ok {
-							ed = temperatureData{
-								minTemp:   temp,
-								maxTemp:   temp,
-								sumTemp:   temp,
-								dataCount: 1,
-							}
-						} else {
-							ed.dataCount++
-							ed.sumTemp += temp
-							if temp < ed.minTemp {
-								ed.minTemp = temp
-							}
-							if temp > ed.maxTemp {
-								ed.maxTemp = temp
-							}
-						}
-						tm[city] = ed
+					l = 32
+					if l > len((*content)[i:]) {
+						l = len((*content)[i:])
 					}
+					sep2 := i + bytes.IndexByte((*content)[i:i+l], 59)
+					nl2 := i + bytes.IndexByte((*content)[i:i+l], 13)
+					if sep2 != -1 && nl2 != -1 && nl2 > sep2 {
+						city = string((*content)[i:sep2])
+						temp = toInt((*content)[sep2+1 : nl2])
+					}
+					i = nl2 + 1
+					ed, ok := tm[city]
+					if !ok {
+						ed = temperatureData{
+							minTemp:   temp,
+							maxTemp:   temp,
+							sumTemp:   temp,
+							dataCount: 1,
+						}
+					} else {
+						ed.dataCount++
+						ed.sumTemp += temp
+						if temp < ed.minTemp {
+							ed.minTemp = temp
+						}
+						if temp > ed.maxTemp {
+							ed.maxTemp = temp
+						}
+					}
+					tm[city] = ed
 				}
 				(*tempMap)[id] = tm
 			}(id, &fileContent[id], &tempMap)
@@ -258,12 +255,14 @@ func printDataSorted(cityDatas *map[string]temperatureData, noprint bool) {
 }
 
 func main() {
+	var cycle = flag.Int("cycle", 1, "number of run cycles")
+	flag.Parse()
 	minTime := time.Duration(0)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < *cycle; i++ {
 		var startTime = time.Now()
 		td := loadFileIntoMemory(".\\testdata\\measurements.txt", runtime.NumCPU())
 		md := mergeTemperatureData(&td)
-		if i == 9 {
+		if i == *cycle-1 {
 			printDataSorted(md, false)
 		} else {
 			printDataSorted(md, true)
