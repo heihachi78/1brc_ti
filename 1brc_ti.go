@@ -66,15 +66,12 @@ func getChunkSizes(numberOfFileChunks int, fileName string) ([]fileChunkLimits, 
 			}
 			var i int = 0
 			for i < n {
-				if readBuffer[i] == 13 && readBuffer[i+1] == 10 {
-					break
-				}
-				if readBuffer[i] == 10 && readBuffer[i+1] == 13 {
+				if readBuffer[i] == 10 {
 					break
 				}
 				i++
 			}
-			i += 2
+			i++
 			chunkLimitsData[id].displacement = int64(i)
 		}(idx, chunkLimitsData, file)
 	}
@@ -142,22 +139,23 @@ func loadFileIntoMemory(fileName string, cpuc int) []map[string]temperatureData 
 			waitGroup.Add(1)
 			go func(id int, content *[]byte, tempMap *[]map[string]temperatureData) {
 				defer waitGroup.Done()
+
 				tm := make(map[string]temperatureData)
 				var city string
 				var temp int32
 				var l int = 64
 				for i := 0; i < len(*content); i++ {
-					l = 32
+					l = 64
 					if l > len((*content)[i:]) {
 						l = len((*content)[i:])
 					}
 					sep2 := i + bytes.IndexByte((*content)[i:i+l], 59)
-					nl2 := i + bytes.IndexByte((*content)[i:i+l], 13)
+					nl2 := i + bytes.IndexByte((*content)[i:i+l], 10)
 					if sep2 != -1 && nl2 != -1 && nl2 > sep2 {
 						city = string((*content)[i:sep2])
 						temp = toInt((*content)[sep2+1 : nl2])
 					}
-					i = nl2 + 1
+					i = nl2
 					ed, ok := tm[city]
 					if !ok {
 						ed = temperatureData{
@@ -256,11 +254,12 @@ func printDataSorted(cityDatas *map[string]temperatureData, noprint bool) {
 
 func main() {
 	var cycle = flag.Int("cycle", 1, "number of run cycles")
+	var input = flag.String("input", "measurements.txt", "input file name")
 	flag.Parse()
 	minTime := time.Duration(0)
 	for i := 0; i < *cycle; i++ {
 		var startTime = time.Now()
-		td := loadFileIntoMemory(".\\testdata\\measurements.txt", runtime.NumCPU())
+		td := loadFileIntoMemory(*input, runtime.NumCPU())
 		md := mergeTemperatureData(&td)
 		if i == *cycle-1 {
 			printDataSorted(md, false)
